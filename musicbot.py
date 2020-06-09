@@ -19,6 +19,8 @@ from youtube_dl import YoutubeDL
 import youtube_dl
 from io import StringIO
 import time
+import urllib.request
+from gtts import gTTS
 
 ##################### 로깅 ###########################
 log_stream = StringIO()    
@@ -31,7 +33,7 @@ logging.basicConfig(stream=log_stream, level=logging.WARNING)
 #ilsanglog.addHandler(handler)
 #####################################################
 
-access_token = os.environ["BOT_TOKEN"]	
+access_token = os.environ["BOT_TOKEN"]
 
 def init():
 	global command
@@ -57,6 +59,33 @@ def init():
 
 init()
 
+#mp3 파일 생성함수(gTTS 이용, 남성목소리)
+async def MakeSound(saveSTR, filename):
+	
+	tts = gTTS(saveSTR, lang = 'ko')
+	tts.save('./' + filename + '.wav')
+	'''
+	try:
+		encText = urllib.parse.quote(saveSTR)
+		urllib.request.urlretrieve("https://clova.ai/proxy/voice/api/tts?text=" + encText + "%0A&voicefont=1&format=wav",filename + '.wav')
+	except Exception as e:
+		print (e)
+		tts = gTTS(saveSTR, lang = 'ko')
+		tts.save('./' + filename + '.wav')
+		pass
+	'''
+#mp3 파일 재생함수	
+async def PlaySound(voiceclient, filename):
+	source = discord.FFmpegPCMAudio(filename)
+	try:
+		voiceclient.play(source)
+	except discord.errors.ClientException:
+		while voiceclient.is_playing():
+			await asyncio.sleep(1)
+	while voiceclient.is_playing():
+		await asyncio.sleep(1)
+	voiceclient.stop()
+	source.cleanup()
 
 # Silence useless bug reports messages
 youtube_dl.utils.bug_reports_message = lambda: ''
@@ -254,17 +283,19 @@ class VoiceState:
 		while True:
 			self.next.clear()
 
-			if not self.loop:
-				# Try to get the next song within 3 minutes.
-				# If no song will be added to the queue in time,
-				# the player will disconnect due to performance
-				# reasons.
-				try:
-					async with timeout(180):  # 3 minutes
-						self.current = await self.songs.get()
-				except asyncio.TimeoutError:
-					self.bot.loop.create_task(self.stop())
-					return
+			if self.loop and self.current is not None:
+				source1 = await YTDLSource.create_source(self._ctx, self.current.source.url, loop=self.bot.loop)
+				song1 = Song(source1)
+				await self.songs.put(song1)
+			else:
+				pass
+
+			try:
+				async with timeout(180):  # 3 minutes
+					self.current = await self.songs.get()
+			except asyncio.TimeoutError:
+				self.bot.loop.create_task(self.stop())
+				return
 
 			self.current.source.volume = self._volume
 			self.voice.play(self.current.source, after=self.play_next_song)
@@ -328,7 +359,6 @@ class Music(commands.Cog):
 		if ctx.voice_state.voice:
 			await ctx.voice_state.voice.move_to(destination)
 			return
-
 		ctx.voice_state.voice = await destination.connect()
 	'''
 	async def cleanup(self, ctx: commands.Context):
@@ -403,29 +433,25 @@ class Music(commands.Cog):
 	async def _skip(self, ctx: commands.Context):
 		if not ctx.voice_state.is_playing:
 			return await ctx.send(':mute: 현재 재생중인 음악이 없습니다.')
-		
+
 		await ctx.message.add_reaction('⏭')
 		ctx.voice_state.skip()
-		'''
+		'''	
 		voter = ctx.message.author
 		if voter == ctx.voice_state.current.requester:
 			await ctx.message.add_reaction('⏭')
 			ctx.voice_state.skip()
-
 		elif voter.id not in ctx.voice_state.skip_votes:
 			ctx.voice_state.skip_votes.add(voter.id)
 			total_votes = len(ctx.voice_state.skip_votes)
-
 			if total_votes >= 3:
 				await ctx.message.add_reaction('⏭')
 				ctx.voice_state.skip()
 			else:
 				await ctx.send('Skip vote added, currently at **{}/3**'.format(total_votes))
-
 		else:
 			await ctx.send('```이미 투표하셨습니다.```')
 		'''
-
 	@commands.command(name=command[6][0], aliases=command[6][1:])
 	async def _queue(self, ctx: commands.Context, *, page: int = 1):
 
@@ -466,16 +492,19 @@ class Music(commands.Cog):
 		await result.add_reaction('✅')
 		
 
-	@commands.command(name='loopaassddaassdd')
+	@commands.command(name=command[14][0], aliases=command[14][1:])
 	async def _loop(self, ctx: commands.Context):
-		'''
 		if not ctx.voice_state.is_playing:
 			return await ctx.send(':mute: 현재 재생중인 음악이 없습니다.')
 
 		# Inverse boolean value to loop and unloop.
 		ctx.voice_state.loop = not ctx.voice_state.loop
-		await ctx.message.add_reaction('🔁')
-		'''
+		if ctx.voice_state.loop :
+			result = await ctx.send('반복재생이 설정되었습니다!')
+		else:
+			result = await ctx.send('반복재생이 취소되었습니다!')
+		await result.add_reaction('🔁')
+
 	@commands.command(name=command[2][0], aliases=command[2][1:])
 	async def _play(self, ctx: commands.Context, *, search: str):
 		if not ctx.voice_state.voice:
@@ -491,7 +520,147 @@ class Music(commands.Cog):
 
 				await ctx.voice_state.songs.put(song)
 				await ctx.send('재생목록 추가 : {}'.format(str(source)))
+				
+	@commands.command(name=command[13][0], aliases=command[13][1:])
+	async def race_(self, ctx: commands.Context, *, msg: str):
+		#msg = ctx.message.content[len(ctx.invoked_with)+1:]
+		race_info = []
+		fr = []
+		racing_field = []
+		str_racing_field = []
+		cur_pos = []
+		race_val = []
+		random_pos = []
+		racing_result = []
+		output = ':camera: :camera: :camera: 신나는 레이싱! :camera: :camera: :camera:\n'
+		#racing_unit = [':giraffe:', ':elephant:', ':tiger2:', ':hippopotamus:', ':crocodile:',':leopard:',':ox:', ':sheep:', ':pig2:',':dromedary_camel:',':dragon:',':rabbit2:'] #동물스킨
+		racing_unit = [':red_car:', ':taxi:', ':bus:', ':trolleybus:', ':race_car:', ':police_car:', ':ambulance:', ':fire_engine:', ':minibus:', ':truck:', ':articulated_lorry:', ':tractor:', ':scooter:', ':manual_wheelchair:', ':motor_scooter:', ':auto_rickshaw:', ':blue_car:', ':bike:', ':helicopter:', ':steam_locomotive:']  #탈것스킨
+		random.shuffle(racing_unit) 
+		racing_member = msg.split(" ")
 
+		'''
+		racing_unit = []
+		emoji = discord.Emoji
+		emoji = ctx.message.guild.emojis
+		for j in range(len(tmp_racing_unit)):
+			racing_unit.append(':' + tmp_racing_unit[j] + ':')
+			for i in range(len(emoji)):
+				if emoji[i].name == tmp_racing_unit[j].strip(":"):
+					racing_unit[j] = '<:' + tmp_racing_unit[j] + ':' + str(emoji[i].id) + '>'
+		random.shuffle(racing_unit)
+		'''
+		field_size = 60
+		tmp_race_tab = 35 - len(racing_member)
+		if len(racing_member) <= 1:
+			await ctx.send('레이스 인원이 2명보다 작습니다.')
+			return
+		elif len(racing_member) >= 13:
+			await ctx.send('레이스 인원이 12명 초과입니다.')
+			return
+		else :
+			race_val = random.sample(range(tmp_race_tab, tmp_race_tab+len(racing_member)), len(racing_member))
+			random.shuffle(race_val)
+			for i in range(len(racing_member)):
+				fr.append(racing_member[i])
+				fr.append(racing_unit[i])
+				fr.append(race_val[i])
+				race_info.append(fr)
+				fr = []
+				for i in range(field_size):
+					fr.append(" ")
+				racing_field.append(fr)
+				fr = []
+
+			for i in range(len(racing_member)):
+				racing_field[i][0] = "|"
+				racing_field[i][field_size-2] = race_info[i][1]
+				if len(race_info[i][0]) > 5:
+					racing_field[i][field_size-1] = "| " + race_info[i][0][:5] + '..'
+				else:
+					racing_field[i][field_size-1] = "| " + race_info[i][0]
+				str_racing_field.append("".join(racing_field[i]))
+				cur_pos.append(field_size-2)
+
+			for i in range(len(racing_member)):
+				output +=  str_racing_field[i] + '\n'
+
+			result_race = await ctx.send(output + ':traffic_light: 3초 후 경주가 시작됩니다!')
+			await asyncio.sleep(1)
+			await result_race.edit(content = output + ':traffic_light: 2초 후 경주가 시작됩니다!')
+			await asyncio.sleep(1)
+			await result_race.edit(content = output + ':traffic_light: 1초 후 경주가 시작됩니다!')
+			await asyncio.sleep(1)
+			await result_race.edit(content = output + ':checkered_flag:  경주 시작!')								
+
+			for i in range(len(racing_member)):
+				test = random.sample(range(2,field_size-2), race_info[i][2])
+				while len(test) != tmp_race_tab + len(racing_member)-1 :
+					test.append(1)
+				test.append(1)
+				test.sort(reverse=True)
+				random_pos.append(test)
+
+			for j in range(len(random_pos[0])):
+				if j%2 == 0:
+					output =  ':camera: :camera_with_flash: :camera: 신나는 레이싱! :camera_with_flash: :camera: :camera_with_flash:\n'
+				else :
+					output =  ':camera_with_flash: :camera: :camera_with_flash: 신나는 레이싱! :camera: :camera_with_flash: :camera:\n'
+				str_racing_field = []
+				for i in range(len(racing_member)):
+					temp_pos = cur_pos[i]
+					racing_field[i][random_pos[i][j]], racing_field[i][temp_pos] = racing_field[i][temp_pos], racing_field[i][random_pos[i][j]]
+					cur_pos[i] = random_pos[i][j]
+					str_racing_field.append("".join(racing_field[i]))
+
+				await asyncio.sleep(1) 
+
+				for i in range(len(racing_member)):
+					output +=  str_racing_field[i] + '\n'
+
+				await result_race.edit(content = output + ':checkered_flag:  경주 시작!')
+
+			for i in range(len(racing_field)):
+				fr.append(race_info[i][0])
+				fr.append((race_info[i][2]) - tmp_race_tab + 1)
+				racing_result.append(fr)
+				fr = []
+
+			result = sorted(racing_result, key=lambda x: x[1])
+
+			result_str = ''
+			for i in range(len(result)):
+				if result[i][1] == 1:
+					result[i][1] = ':first_place:'
+				elif result[i][1] == 2:
+					result[i][1] = ':second_place:'
+				elif result[i][1] == 3:
+					result[i][1] = ':third_place:'
+				elif result[i][1] == 4:
+					result[i][1] = ':four:'
+				elif result[i][1] == 5:
+					result[i][1] = ':five:'
+				elif result[i][1] == 6:
+					result[i][1] = ':six:'
+				elif result[i][1] == 7:
+					result[i][1] = ':seven:'
+				elif result[i][1] == 8:
+					result[i][1] = ':eight:'
+				elif result[i][1] == 9:
+					result[i][1] = ':nine:'
+				elif result[i][1] == 10:
+					result[i][1] = ':keycap_ten:'
+				else:
+					result[i][1] = ':x:'
+				result_str += result[i][1] + "  " + result[i][0] + "  "
+
+			#print(result)
+			await asyncio.sleep(1)
+			await result_race.edit(content = output + ':tada: 경주 종료!\n' + result_str)
+
+	@commands.command(name="!hellothisisverification")
+	async def verification_(self, ctx: commands.Context, *, msg: str=None):
+		await ctx.send('일상#7025(chochul12@gmail.com')
+		
 	@_summon.before_invoke
 	@_play.before_invoke
 	async def ensure_voice_state(self, ctx: commands.Context):
@@ -505,6 +674,7 @@ class Music(commands.Cog):
 	@commands.command(name=command[12][0], aliases=command[12][1:])   #도움말
 	async def menu_(self, ctx):
 		command_list = ''
+		command_list += '!인중 : 봇상태가 안좋을 때 쓰세요!'     #!
 		command_list += ','.join(command[0]) + '\n'     #!들어가자
 		command_list += ','.join(command[1]) + '\n'     #!나가자
 		command_list += ','.join(command[2]) + ' [검색어] or [url]\n'     #!재생
@@ -517,12 +687,33 @@ class Music(commands.Cog):
 		command_list += ','.join(command[9]) + '\n'     #!정지
 		command_list += ','.join(command[10]) + '\n'     #!삭제
 		command_list += ','.join(command[11]) + '\n'     #!섞기
+		command_list += ','.join(command[14]) + '\n'     #!
+		command_list += ','.join(command[13]) + ' 아이디1 아이디2 아이디3 ....\n'     #!경주
 		embed = discord.Embed(
 				title = "----- 명령어 -----",
 				description= '```' + command_list + '```',
 				color=0xff00ff
 				)
 		await ctx.send( embed=embed, tts=False)
+	################ 음성파일 생성 후 재생 ################ 			
+	@commands.command(name="!인중")
+	async def playText_(self, ctx):
+		#msg = ctx.message.content[len(ctx.invoked_with)+1:]
+		#sayMessage = msg
+		await MakeSound('뮤직봇이 마이 아파요. 잠시 후 사용해주세요.', './say' + str(ctx.guild.id))
+		await ctx.send("```뮤직봇이 마이 아파요. 잠시 후 사용해주세요.```", tts=False)
+		
+		if not ctx.voice_state.voice:
+			await ctx.invoke(self._summon)
+			
+		if ctx.voice_state.is_playing:
+			ctx.voice_state.voice.stop()
+		
+		await PlaySound(ctx.voice_state.voice, './say' + str(ctx.guild.id) + '.wav')
+
+
+		await ctx.voice_state.stop()
+		del self.voice_states[ctx.guild.id]
 
 bot = commands.Bot('', help_command = None, description='해성뮤직봇')
 bot.add_cog(Music(bot))
@@ -536,13 +727,12 @@ async def on_ready():
 	
 	await bot.change_presence(status=discord.Status.dnd, activity=discord.Game(name=command[12][0], type=1), afk = False)
 
-@bot.event
+@bot.event 
 async def on_command_error(ctx, error):
 	if isinstance(error, CommandNotFound):
 		return
 	elif isinstance(error, discord.ext.commands.MissingRequiredArgument):
 		return
 	raise error
-
 
 bot.run(access_token)
